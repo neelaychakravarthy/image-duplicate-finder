@@ -234,7 +234,7 @@ class DuplicateFinderApp(ctk.CTk):
         self.control_button_frame = ctk.CTkFrame(self.viewer_frame)
         self.control_button_frame.grid(row=1, column=0, columnspan=2, pady=10)
 
-        self.confirm_selection_button = ctk.CTkButton(self.control_button_frame, text="Confirm Selection (Keep Selected)", command=self.confirm_selection)
+        self.confirm_selection_button = ctk.CTkButton(self.control_button_frame, text="Confirm Selection (Keep Selected) / Delete All (None Selected)", command=self.confirm_selection)
         self.confirm_selection_button.grid(row=0, column=0, padx=5)
 
         self.skip_group_button = ctk.CTkButton(self.control_button_frame, text="Skip Group", command=self.skip_group)
@@ -352,13 +352,41 @@ class DuplicateFinderApp(ctk.CTk):
         print(f"Selected image to keep: {image_path}")
 
     def confirm_selection(self):
-        if not self.selected_image_path or not self.current_pair_paths:
-            print("Please select an image to keep before confirming.")
+        if not self.current_pair_paths:
+            print("No group selected to confirm.")
             return
-        
+
         group_paths = self.current_pair_paths
         processed_group_id = None
 
+        if not self.selected_image_path:
+            # No image selected to keep, delete all in the current group
+            deleted_count = 0
+            for path_to_delete in group_paths:
+                try:
+                    os.remove(path_to_delete)
+                    print(f"Deleted: {path_to_delete}")
+                    deleted_count += 1
+                except OSError as e:
+                    print(f"Error deleting {path_to_delete}: {e}")
+            print(f"No image selected to keep. Deleted all {deleted_count} images in the current group.")
+            
+            # Find the group data to mark as processed
+            for item in self.all_duplicates:
+                if item["paths"] == group_paths:
+                    processed_group_id = item["id"]
+                    item["status"] = "all_deleted"
+                    break
+            
+            if processed_group_id is not None:
+                self.update_group_status_and_remove_button(processed_group_id, "completed")
+            else:
+                print("Error: Current group not found in duplicate list after all deletions.")
+            
+            self.clear_viewer_and_selection()
+            return
+
+        # If an image is selected, proceed with the original logic
         # Find the group data
         for item in self.all_duplicates:
             if item["paths"] == group_paths:
