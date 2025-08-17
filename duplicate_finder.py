@@ -161,6 +161,12 @@ class DuplicateFinderApp(ctk.CTk):
         self.all_duplicates = [] # List to store all found duplicates with an ID
         self.duplicate_buttons = {} # Map ID to button widget for updating
 
+        self.auto_delete_initial_setting = ctk.BooleanVar(value=False)
+        self.auto_delete_active = False
+
+        self.found_groups_count = 0
+        self.deleted_pictures_count = 0
+
         # Initial UI for directory selection
         self.grid_columnconfigure(0, weight=1)
         self.grid_rowconfigure(0, weight=1)
@@ -179,6 +185,9 @@ class DuplicateFinderApp(ctk.CTk):
 
         self.browse_button = ctk.CTkButton(self.directory_selection_frame, text="Browse", command=self.select_directory)
         self.browse_button.grid(row=2, column=0, pady=10)
+
+        self.auto_delete_checkbox = ctk.CTkCheckBox(self.directory_selection_frame, text="Enable Automatic Deletion", variable=self.auto_delete_initial_setting)
+        self.auto_delete_checkbox.grid(row=3, column=0, pady=5)
 
 
     def select_directory(self):
@@ -209,6 +218,15 @@ class DuplicateFinderApp(ctk.CTk):
         self.status_frame.grid(row=0, column=0, columnspan=2, padx=10, pady=5, sticky="ew")
         self.status_label = ctk.CTkLabel(self.status_frame, text="Initializing...")
         self.status_label.pack(side="left", padx=10, pady=5)
+        
+        self.auto_delete_status_label = ctk.CTkLabel(self.status_frame, text="Auto-Deletion: Disabled", text_color="red")
+        self.auto_delete_status_label.pack(side="right", padx=10, pady=5)
+
+        self.found_groups_label = ctk.CTkLabel(self.status_frame, text=f"Groups Found: {self.found_groups_count}")
+        self.found_groups_label.pack(side="left", padx=10, pady=5)
+
+        self.deleted_pictures_label = ctk.CTkLabel(self.status_frame, text=f"Pictures Deleted: {self.deleted_pictures_count}")
+        self.deleted_pictures_label.pack(side="left", padx=10, pady=5)
 
         # --- Left Panel: Duplicate List ---
         self.list_frame = ctk.CTkFrame(self)
@@ -243,6 +261,15 @@ class DuplicateFinderApp(ctk.CTk):
         self.quit_button = ctk.CTkButton(self.control_button_frame, text="Quit", command=self.quit_app)
         self.quit_button.grid(row=0, column=2, padx=5) # Adjust column
 
+        self.start_auto_delete_button = ctk.CTkButton(self.control_button_frame, text="Start Auto-Delete", command=self.start_auto_delete)
+        self.start_auto_delete_button.grid(row=0, column=3, padx=5)
+        self.stop_auto_delete_button = ctk.CTkButton(self.control_button_frame, text="Stop Auto-Delete", command=self.stop_auto_delete)
+        self.stop_auto_delete_button.grid(row=0, column=4, padx=5)
+
+        # Initialize auto_delete_active based on initial setting
+        if self.auto_delete_initial_setting.get():
+            self.start_auto_delete()
+
         # Selection state for click-to-keep (initialized here)
         self.selected_image_path = None
         self.selected_image_label_ref = None # Reference to the actual CTkLabel widget
@@ -268,11 +295,21 @@ class DuplicateFinderApp(ctk.CTk):
                     if len(group_paths) > 1:
                         duplicate_id = len(self.all_duplicates) # Simple unique ID for the group
                         self.all_duplicates.append({"id": duplicate_id, "paths": group_paths, "status": "pending"})
+                        self.found_groups_count += 1
+                        self.found_groups_label.configure(text=f"Groups Found: {self.found_groups_count}")
                         
-                        button_text = f"Group {duplicate_id}: {len(group_paths)} images"
-                        btn = ctk.CTkButton(self.duplicate_list_scrollable_frame, text=button_text, command=lambda id=duplicate_id: self.display_selected_group(id))
-                        btn.pack(fill="x", pady=2)
-                        self.duplicate_buttons[duplicate_id] = btn
+                        if self.auto_delete_active:
+                            # If auto-delete is active, immediately process this group
+                            self.selected_image_path = group_paths[0] # Select the first image to keep
+                            self.current_pair_paths = group_paths # Set current group for confirm_selection
+                            self.confirm_selection()
+                            # No need to create a button as it's processed immediately
+                        else:
+                            # In manual mode, add to list and create button
+                            button_text = f"Group {duplicate_id}: {len(group_paths)} images"
+                            btn = ctk.CTkButton(self.duplicate_list_scrollable_frame, text=button_text, command=lambda id=duplicate_id: self.display_selected_group(id))
+                            btn.pack(fill="x", pady=2)
+                            self.duplicate_buttons[duplicate_id] = btn
                 elif msg_type == "done":
                     self.status_label.configure(text="Processing complete.")
                     self.worker_thread.join() # Ensure thread finishes
@@ -370,6 +407,8 @@ class DuplicateFinderApp(ctk.CTk):
                 except OSError as e:
                     print(f"Error deleting {path_to_delete}: {e}")
             print(f"No image selected to keep. Deleted all {deleted_count} images in the current group.")
+            self.deleted_pictures_count += deleted_count
+            self.deleted_pictures_label.configure(text=f"Pictures Deleted: {self.deleted_pictures_count}")
             
             # Find the group data to mark as processed
             for item in self.all_duplicates:
@@ -411,6 +450,8 @@ class DuplicateFinderApp(ctk.CTk):
                     # Optionally update item status to reflect partial deletion or error
         
         print(f"Confirmed selection: Kept {self.selected_image_path}. Deleted {deleted_count} others.")
+        self.deleted_pictures_count += deleted_count
+        self.deleted_pictures_label.configure(text=f"Pictures Deleted: {self.deleted_pictures_count}")
         self.update_group_status_and_remove_button(processed_group_id, "completed")
         self.clear_viewer_and_selection()
 
@@ -532,6 +573,26 @@ class DuplicateFinderApp(ctk.CTk):
             if self.worker_thread.is_alive():
                 print("Warning: Worker thread did not terminate gracefully.")
         self.destroy()
+
+    def start_auto_delete(self):
+        self.auto_delete_active = True
+        self.auto_delete_status_label.configure(text="Auto-Deletion: Enabled", text_color="green")
+        print("Auto-deletion enabled.")
+
+        # Process any pending duplicate groups that were found while auto-delete was off
+        # Iterate over a copy of the list to allow modification during iteration
+        for item in list(self.all_duplicates): # Create a copy to iterate while modifying the original list
+            if item["status"] == "pending":
+                # Simulate processing as if it just came from the queue
+                self.selected_image_path = item["paths"][0] # Select the first image to keep
+                self.current_pair_paths = item["paths"] # Set current group for confirm_selection
+                self.confirm_selection()
+                # The button for this group will be removed by confirm_selection
+
+    def stop_auto_delete(self):
+        self.auto_delete_active = False
+        self.auto_delete_status_label.configure(text="Auto-Deletion: Disabled", text_color="red")
+        print("Auto-deletion disabled.")
 
 
 def find_image_files(directory_path):
