@@ -597,7 +597,7 @@ class DuplicateFinderApp(ctk.CTk):
 
 def find_image_files(directory_path):
     image_paths = []
-    extensions = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.webp', '.gif']
+    extensions = ['.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.webp', '.gif', '.heic']
     for filepath in Path(directory_path).rglob('*'):
         if filepath.is_file() and filepath.suffix.lower() in extensions:
             image_paths.append(filepath)

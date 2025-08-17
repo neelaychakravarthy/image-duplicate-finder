@@ -3,3 +3,4 @@ imagehash
 sentence-transformers
 torch # sentence-transformers dependency for models, good to include
 numpy # common dependency, good to ensure
+customtkinter
